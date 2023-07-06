@@ -2,18 +2,23 @@
 #define TENSION_TENSION_H
 
 #include <stdbool.h>
+#include "graphics.h"
 
-#define PI 3.14159265
 #define RAD_CONV_FACTOR 0.0174532925
+#define VIEW_DISTANCE 100
+
+#define DEBUG_SCALE 10
+#define MTSX(X, S) (uint8_t) ((X*DEBUG_SCALE+(S->w/2)))
+#define MTSY(Y, S) (uint8_t) (((S->h/2)-Y*DEBUG_SCALE))
 
 // BASIC TYPES ================================================================
 
-typedef struct _point {
+typedef struct {
     float x;
     float y;
 } point;
 
-typedef struct _line {
+typedef struct {
     point* p1;
     point* p2;
     uint8_t color;
@@ -47,21 +52,21 @@ bool line_intersection(line* l1, line* l2, point* intersection) {
     return point_intersection(l1->p1, l1->p2, l2->p1, l2->p2, intersection);
 }
 
-void point_rotate(point* center, point* p1, uint16_t angle) {
-    float radians = angle * RAD_CONV_FACTOR;
-    p1->x -= center->x;
-    p1->y -= center->y;
+void point_rotate(point* p1, point* p2, uint16_t a) {
+    float radians = a * RAD_CONV_FACTOR;
+    p2->x -= p1->x;
+    p2->y -= p1->y;
     float c = cos(radians);
     float s = sin(radians);
-    float nx = p1->x * c - p1->y * s;
-    float ny = p1->x * s + p1->y * c;
-    p1->x = nx + center->x;
-    p1->y = ny + center->y;
+    float nx = p2->x * c - p2->y * s;
+    float ny = p2->x * s + p2->y * c;
+    p2->x = nx + p1->x;
+    p2->y = ny + p1->y;
 }
 
-void line_rotate(point* center, line* l1, uint16_t angle) {
-    point_rotate(center, l1->p1, angle);
-    point_rotate(center, l1->p2, angle);
+void line_rotate(point* p1, line* l1, uint16_t angle) {
+    point_rotate(p1, l1->p1, angle);
+    point_rotate(p1, l1->p2, angle);
 }
 
 float point_length(point* p1, point* p2) {
@@ -74,49 +79,109 @@ float line_length(line* l1) {
 
 // TYPES =====================================================================
 
-typedef struct _polygon {
+typedef struct {
     line* lines;
     unsigned int size;
-} polygon;
-
-typedef struct _map {
-    polygon* polygons;
-    unsigned int size;
+    uint8_t ceiling_color;
+    uint8_t floor_color;
 } map;
 
-typedef struct _camera {
-    point* position;
-    point* left;
-    point* right;
-    float width;
-    float distance;
-    uint16_t angle;
+typedef union {
+    struct {
+        point* position;
+        point* left;
+        point* right;
+        float width;
+        float distance;
+        uint16_t angle;
+    };
+    struct {
+        point* p;
+        point* l;
+        point* r;
+        float w;
+        float d;
+        uint16_t a;
+    };
 } camera;
 
 // FUNCTIONS =================================================================
 
-void camera_rotate(camera* c, uint16_t angle) {
+void camera_rotate(camera* c, uint16_t a) {
     // start in 0 degree position
-    c->left->x = c->position->x + c->width;
-    c->left->y = c->position->y + c->distance;
-    c->right->x = c->position->x + c->width;
-    c->right->y = c->position->y - c->distance;
+    c->l->x = c->p->x + c->w;
+    c->l->y = c->p->y + c->d;
+    c->r->x = c->p->x + c->w;
+    c->r->y = c->p->y - c->d;
 
     // now change the angle
-    point_rotate(c->position, c->left, angle);
-    point_rotate(c->position, c->right, angle);
-    c->angle = angle;
+    point_rotate(c->p, c->l, a);
+    point_rotate(c->p, c->r, a);
+    c->a = a;
 }
 
-void camera_move(camera* c, point* p) {
-    float pdx = p->x - c->position->x;
-    float pdy = p->y - c->position->y;
-    c->position->x = p->x;
-    c->position->y = p->y;
-    c->left->x += pdx;
-    c->left->y += pdy;
-    c->right->x += pdx;
-    c->right->y += pdy;
+void camera_move(camera* c, point* p1) {
+    float pdx = p1->x - c->p->x;
+    float pdy = p1->y - c->p->y;
+    c->p->x = p1->x;
+    c->p->y = p1->y;
+    c->l->x += pdx;
+    c->l->y += pdy;
+    c->r->x += pdx;
+    c->r->y += pdy;
+}
+
+void camera_render(camera* c, surface* s, map* m, bool debug) {
+    surf_draw_filled_rectangle(s, 0, 0, 160, 60, m->ceiling_color);
+    surf_draw_filled_rectangle(s, 0, 60, 160, 60, m->floor_color);
+    float length = point_length(c->l, c->r)/s->w;
+    float dx = (c->r->x - c->l->x)/s->w;
+    float dy = (c->r->y - c->l->y)/s->w;
+    for (int i = 0; i < s->w; i++) {
+        point p = {c->l->x + i*dx, c->l->y + i*dy};
+
+        // view distance
+        float pdx = p.x - c->p->x;
+        float pdy = p.y - c->p->y;
+        p.x += pdx * VIEW_DISTANCE;
+        p.y += pdy * VIEW_DISTANCE;
+
+        point intersection = {0, 0};
+        float lowscore = 300;
+        for (int j = 0; j < m->size; j++) {
+            line* current = &m->lines[j];
+            if (point_intersection(c->p, &p, current->p1, current->p2, &intersection)) {
+                float len = point_length(c->p, &intersection);
+                if (len < lowscore) {
+                    lowscore = len;
+                    uint8_t lineheight = (uint8_t)(60/len);
+                    surf_draw_line(s, i, 60, i, 60-lineheight, current->color);
+                    surf_draw_line(s, i, 60, i, 60+lineheight, current->color);
+                }
+            }
+        }
+    }
+
+    if (debug) {
+        uint8_t c1x = MTSX(c->l->x, s);
+        uint8_t c1y = MTSY(c->l->y, s);
+        uint8_t c2x = MTSX(c->r->x, s);
+        uint8_t c2y = MTSY(c->r->y, s);
+        uint8_t px = MTSX(c->p->x, s);
+        uint8_t py = MTSY(c->p->y, s);
+        surf_draw_line(s, c1x, c1y, c2x, c2y, 6);
+        surf_set_pixel(s, c1x, c1y, 7);
+        surf_set_pixel(s, c2x, c2y, 7);
+        surf_set_pixel(s, px, py, 7);
+        for (int i = 0; i < m->size; i++) {
+            line* current = &m->lines[i];
+            uint8_t p1x = MTSX(current->p1->x, s);
+            uint8_t p1y = MTSY(current->p1->y, s);
+            uint8_t p2x = MTSX(current->p2->x, s);
+            uint8_t p2y = MTSY(current->p2->y, s);
+            surf_draw_line(s, p1x, p1y, p2x, p2y, 6);
+        }
+    }
 }
 
 #endif //TENSION_TENSION_H

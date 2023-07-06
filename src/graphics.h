@@ -36,22 +36,12 @@ typedef union {
     };
 } surface;
 
-static void swap(uint8_t* xp, uint8_t* yp) {
-    uint8_t temp = *xp;
-    *xp = *yp;
-    *yp = temp;
-}
-
 static surface surf_create(uint8_t width, uint8_t height) {
-    return (surface) {
-        width, height, malloc(SURF_SIZE(width, height))
-    };
+    return (surface) {width, height, malloc(SURF_SIZE(width, height))};
 }
 
 static surface surf_create_from_memory(uint8_t width, uint8_t height, void* data) {
-    return (surface) {
-            width, height, data
-    };
+    return (surface) {width, height, data};
 }
 
 static void surf_resize(surface* surf, uint8_t width, uint8_t height) {

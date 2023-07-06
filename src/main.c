@@ -6,25 +6,17 @@
 #include <input.h>
 #include <timer.h>
 
+#include "maths.h"
+#include "strings.h"
 #include "graphics.h"
 #include "tension.h"
 
-#define DEBUG_SCALE 10
-#define MTGX(X) (uint8_t) ((X*DEBUG_SCALE+80))
-#define MTGY(Y) (uint8_t) ((60-Y*DEBUG_SCALE))
-#define ROTATE_COOLDOWN 50
-#define MOVE_COOLDOWN 50
+#define ROTATE_COOLDOWN 0
+#define MOVE_COOLDOWN 0
 #define PLAYER_STEP 0.05
 
-#define VIEWPORT_WIDTH 160
-#define VIEW_DISTANCE 100
-
-#define CEILING_COLOR 3
-#define FLOOR_COLOR 2
 #define WALL_COLOR_1 4
 #define WALL_COLOR_2 5
-
-//#define DEBUG
 
 uint8_t start(void) {
 
@@ -39,19 +31,32 @@ uint8_t start(void) {
     grayscale[6] = _COLOR(0b110, 0b110, 0b110);
     grayscale[7] = _COLOR(0b111, 0b111, 0b111);
     gpu_update_palette(grayscale);
+    free(grayscale);
 
     // map
-    line l1 = {&(point){-1, 1}, &(point){1, 1}, WALL_COLOR_1}; // random shape
-    line l2 = {&(point){1, 1}, &(point){1, -1}, WALL_COLOR_2};
-    line l3 = {&(point){-1, 1}, &(point){-1, 2}, WALL_COLOR_2};
-    line l4 = {&(point){-1, 2}, &(point){1.5, 2}, WALL_COLOR_1};
-    line l5 = {&(point){1.5, 2}, &(point){1.5, -1}, WALL_COLOR_2};
-    line l6 = {&(point){1.5, -1}, &(point){1, -1}, WALL_COLOR_1};
-    line l7 = {&(point){-5, 3}, &(point){5, 3}, WALL_COLOR_1}; // border
-    line l8 = {&(point){5, 3}, &(point){5, -3}, WALL_COLOR_2};
-    line l9 = {&(point){5, -3}, &(point){-5, -3}, WALL_COLOR_1};
-    line l10 = {&(point){-5, -3}, &(point){-5, 3}, WALL_COLOR_2};
-    polygon pg = {(line[]) {l1, l2, l3, l4, l5, l6, l7, l8, l9, l10}, 10};
+    point* points = malloc(sizeof(point)*10);
+    line* lines = malloc(sizeof(line)*10);
+    points[0] = (point){-1, 1}; // L-shape
+    points[1] = (point){1, 1};
+    points[2] = (point){1, -1};
+    points[3] = (point){1.5, -1};
+    points[4] = (point){1.5, 2};
+    points[5] = (point){-1, 2};
+    points[6] = (point){-5, 3}; // border
+    points[7] = (point){5, 3};
+    points[8] = (point){5, -3};
+    points[9] = (point){-5, -3};
+    lines[0] = (line){&points[0], &points[1], WALL_COLOR_1};
+    lines[1] = (line){&points[1], &points[2], WALL_COLOR_2};
+    lines[2] = (line){&points[2], &points[3], WALL_COLOR_1};
+    lines[3] = (line){&points[3], &points[4], WALL_COLOR_2};
+    lines[4] = (line){&points[4], &points[5], WALL_COLOR_1};
+    lines[5] = (line){&points[5], &points[0], WALL_COLOR_2};
+    lines[6] = (line){&points[6], &points[7], WALL_COLOR_1};
+    lines[7] = (line){&points[7], &points[8], WALL_COLOR_2};
+    lines[8] = (line){&points[8], &points[9], WALL_COLOR_1};
+    lines[9] = (line){&points[9], &points[6], WALL_COLOR_2};
+    map m = {lines, 10, 3, 2};
 
     // init camera
     camera cam = {&(point){0, 0}, &(point){0, 0}, &(point){0, 0}, 1.0, 0.5, 0};
@@ -62,14 +67,19 @@ uint8_t start(void) {
     int rotate_cooldown = -1;
     int move_cooldown = -1;
     int angle;
+    uint32_t start = 0;
+    uint32_t stop = 0;
+    uint32_t deltatime = 0;
+    bool debug = false;
+    bool last_debug;
     while (true) {
-
-        // draw ceiling & floor
-        surf_draw_filled_rectangle(&surf, 0, 0, 160, 60, CEILING_COLOR);
-        surf_draw_filled_rectangle(&surf, 0, 60, 160, 60, FLOOR_COLOR);
 
         // quit game
         if (input_get_button(0, BUTTON_SELECT)) break;
+
+        // toggle debug
+        if (input_get_button(0, BUTTON_START) && !last_debug) debug = !debug;
+        last_debug = input_get_button(0, BUTTON_START);
 
         // rotate
         if (input_get_button(0, BUTTON_A)) {
@@ -79,7 +89,7 @@ uint8_t start(void) {
                 camera_rotate(&cam, angle);
                 rotate_cooldown = ROTATE_COOLDOWN;
             }
-            rotate_cooldown--;
+            rotate_cooldown -= deltatime;
         }
         if (input_get_button(0, BUTTON_B)) {
             if (rotate_cooldown < 0) {
@@ -88,7 +98,7 @@ uint8_t start(void) {
                 camera_rotate(&cam, angle);
                 rotate_cooldown = ROTATE_COOLDOWN;
             }
-            rotate_cooldown--;
+            rotate_cooldown -= deltatime;
         }
 
         // move
@@ -105,73 +115,26 @@ uint8_t start(void) {
                 point_rotate(cam.position, &next_pos, cam.angle);
                 camera_move(&cam, &next_pos);
             }
-        } else move_cooldown--;
+        } else move_cooldown -= deltatime;
 
         // render
-        float length = point_length(cam.left, cam.right)/VIEWPORT_WIDTH;
-        float dx = (cam.right->x - cam.left->x)/VIEWPORT_WIDTH;
-        float dy = (cam.right->y - cam.left->y)/VIEWPORT_WIDTH;
-        for (int i = 0; i < VIEWPORT_WIDTH; i++) {
-            point p = {cam.left->x + i*dx, cam.left->y + i*dy};
+        camera_render(&cam, &surf, &m, debug);
 
-            // view distance
-            float pdx = p.x - cam.position->x;
-            float pdy = p.y - cam.position->y;
-            p.x += pdx * VIEW_DISTANCE;
-            p.y += pdy * VIEW_DISTANCE;
+        // timing
+        gpu_block_frame();
+        stop = timer_get_ms();
+        deltatime = stop - start;
+        start = timer_get_ms();
 
-            point intersection = {0, 0};
-            float lowscore = 300;
-            for (int j = 0; j < pg.size; j++) {
-                line current = pg.lines[j];
-                if (point_intersection(cam.position, &p, current.p1, current.p2, &intersection)) {
-                    float len = point_length(cam.position, &intersection);
-                    if (len < lowscore) {
-                        lowscore = len;
-                        #ifdef DEBUG
-                            uint8_t ix = MTGX(intersection.x);
-                            uint8_t iy = MTGY(intersection.y);
-                            uint8_t px = MTGX(cam.position->x);
-                            uint8_t py = MTGY(cam.position->y);
-                            surf_draw_line(&surf, px, py, ix, iy, 1);
-                        #endif
-                        #ifndef DEBUG
-                            uint8_t lineheight = 60/len;
-                            surf_draw_line(&surf, i, 60, i, 60-lineheight, current.color);
-                            surf_draw_line(&surf, i, 60, i, 60+lineheight, current.color);
-                        #endif
-                    }
-                }
-            }
-        }
+         // send to gpu
+        gpu_send_buf(BACK_BUFFER, surf.w, surf.h, 0, 0, surf.data);
+        gpu_print_text(BACK_BUFFER, 0, 0, 7, 0, INLINE_DECIMAL3(deltatime));
 
-        // debug
-        #ifdef DEBUG
-            uint8_t c1x = MTGX(cam.left->x);
-            uint8_t c1y = MTGY(cam.left->y);
-            uint8_t c2x = MTGX(cam.right->x);
-            uint8_t c2y = MTGY(cam.right->y);
-            uint8_t px = MTGX(cam.position->x);
-            uint8_t py = MTGY(cam.position->y);
-            surf_draw_line(&surf, c1x, c1y, c2x, c2y, 1);
-            surf_set_pixel(&surf, c1x, c1y, 2);
-            surf_set_pixel(&surf, c2x, c2y, 2);
-            surf_set_pixel(&surf, px, py, 2);
-            for (int i = 0; i < pg.size; i++) {
-                line current = pg.lines[i];
-                uint8_t p1x = MTGX(current.p1->x);
-                uint8_t p1y = MTGY(current.p1->y);
-                uint8_t p2x = MTGX(current.p2->x);
-                uint8_t p2y = MTGY(current.p2->y);
-                surf_draw_line(&surf, p1x, p1y, p2x, p2y, 1);
-            }
-        #endif
-
-        // send to gpu
-        gpu_send_buf(FRONT_BUFFER, surf.w, surf.h, 0, 0, surf.data);
-
-        // no timing for now ... the game relies on lag to work.
+        // wait for everything to be sent
+        gpu_block_ack();
+        gpu_swap_buf();
     }
-
-    return CODE_FREEZEFRAME;
+    free(points);
+    free(lines);
+    return CODE_EXIT;
 }

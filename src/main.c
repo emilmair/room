@@ -34,8 +34,8 @@ uint8_t start(void) {
     free(grayscale);
 
     // map
-    point* points = malloc(sizeof(point)*10);
-    line* lines = malloc(sizeof(line)*10);
+    point* points = malloc(sizeof(point)*13);
+    line* lines = malloc(sizeof(line)*13);
     points[0] = (point){-1, 1}; // L-shape
     points[1] = (point){1, 1};
     points[2] = (point){1, -1};
@@ -46,20 +46,26 @@ uint8_t start(void) {
     points[7] = (point){5, 3};
     points[8] = (point){5, -3};
     points[9] = (point){-5, -3};
-    lines[0] = (line){&points[0], &points[1], WALL_COLOR_1};
+    points[10] = (point){-2, 0}; // prism
+    points[11] = (point){-2, -0.8};
+    points[12] = (point){-2.7, -0.4};
+    lines[0] = (line){&points[0], &points[1], WALL_COLOR_1}; // L-shape
     lines[1] = (line){&points[1], &points[2], WALL_COLOR_2};
     lines[2] = (line){&points[2], &points[3], WALL_COLOR_1};
     lines[3] = (line){&points[3], &points[4], WALL_COLOR_2};
     lines[4] = (line){&points[4], &points[5], WALL_COLOR_1};
     lines[5] = (line){&points[5], &points[0], WALL_COLOR_2};
-    lines[6] = (line){&points[6], &points[7], WALL_COLOR_1};
+    lines[6] = (line){&points[6], &points[7], WALL_COLOR_1}; // border
     lines[7] = (line){&points[7], &points[8], WALL_COLOR_2};
     lines[8] = (line){&points[8], &points[9], WALL_COLOR_1};
     lines[9] = (line){&points[9], &points[6], WALL_COLOR_2};
-    map m = {lines, 10, 3, 2};
+    lines[10] = (line){&points[10], &points[11], WALL_COLOR_2}; // prism
+    lines[11] = (line){&points[11], &points[12], WALL_COLOR_2};
+    lines[12] = (line){&points[12], &points[10], WALL_COLOR_2};
+    map m = {lines, 13, 3, 2};
 
     // init camera
-    camera cam = {&(point){0, 0}, &(point){0, 0}, &(point){0, 0}, 1.0, 0.5, 0};
+    camera cam = {&(point){0, 0}, &(point){0, 0}, &(point){0, 0}, 0.5, 0.25, 0};
     camera_rotate(&cam, 0);
     surface surf = surf_create(160, 120);
 
@@ -118,7 +124,9 @@ uint8_t start(void) {
         } else move_cooldown -= deltatime;
 
         // render
-        camera_render(&cam, &surf, &m, debug);
+        camera_render_environment(&cam, &surf, &m);
+        camera_render(&cam, &surf, &m, &ray_edges);
+        if (debug) camera_render_debug(&cam, &surf, &m);
 
         // timing
         gpu_block_frame();

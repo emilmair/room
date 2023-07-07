@@ -105,6 +105,8 @@ typedef union {
     };
 } camera;
 
+typedef void (*ray)(camera* c, surface* s, map* m, point* p, uint8_t i);
+
 // FUNCTIONS =================================================================
 
 void camera_rotate(camera* c, uint16_t a) {
@@ -131,55 +133,100 @@ void camera_move(camera* c, point* p1) {
     c->r->y += pdy;
 }
 
-void camera_render(camera* c, surface* s, map* m, bool debug) {
+void camera_render_debug(camera* c, surface* s, map* m) {
+    uint8_t c1x = MTSX(c->l->x, s);
+    uint8_t c1y = MTSY(c->l->y, s);
+    uint8_t c2x = MTSX(c->r->x, s);
+    uint8_t c2y = MTSY(c->r->y, s);
+    uint8_t px = MTSX(c->p->x, s);
+    uint8_t py = MTSY(c->p->y, s);
+    surf_draw_line(s, c1x, c1y, c2x, c2y, 6);
+    surf_set_pixel(s, c1x, c1y, 7);
+    surf_set_pixel(s, c2x, c2y, 7);
+    surf_set_pixel(s, px, py, 7);
+    for (int i = 0; i < m->size; i++) {
+        line* current = &m->lines[i];
+        uint8_t p1x = MTSX(current->p1->x, s);
+        uint8_t p1y = MTSY(current->p1->y, s);
+        uint8_t p2x = MTSX(current->p2->x, s);
+        uint8_t p2y = MTSY(current->p2->y, s);
+        surf_draw_line(s, p1x, p1y, p2x, p2y, 6);
+    }
+}
+
+void camera_render_environment(camera* c, surface* s, map* m) {
     surf_draw_filled_rectangle(s, 0, 0, 160, 60, m->ceiling_color);
     surf_draw_filled_rectangle(s, 0, 60, 160, 60, m->floor_color);
-    float length = point_length(c->l, c->r)/s->w;
+}
+
+void camera_render(camera* c, surface* s, map* m, ray r) {
     float dx = (c->r->x - c->l->x)/s->w;
     float dy = (c->r->y - c->l->y)/s->w;
     for (int i = 0; i < s->w; i++) {
         point p = {c->l->x + i*dx, c->l->y + i*dy};
+        r(c, s, m, &p, i);
+    }
+}
 
-        // view distance
-        float pdx = p.x - c->p->x;
-        float pdy = p.y - c->p->y;
-        p.x += pdx * VIEW_DISTANCE;
-        p.y += pdy * VIEW_DISTANCE;
-
-        point intersection = {0, 0};
-        float lowscore = 300;
-        for (int j = 0; j < m->size; j++) {
-            line* current = &m->lines[j];
-            if (point_intersection(c->p, &p, current->p1, current->p2, &intersection)) {
-                float len = point_length(c->p, &intersection);
-                if (len < lowscore) {
-                    lowscore = len;
-                    uint8_t lineheight = (uint8_t)(60/len);
-                    surf_draw_line(s, i, 60, i, 60-lineheight, current->color);
-                    surf_draw_line(s, i, 60, i, 60+lineheight, current->color);
-                }
+void ray_standard(camera* c, surface* s, map* m, point* p, uint8_t i) {
+    float pdx = p->x - c->p->x;
+    float pdy = p->y - c->p->y;
+    p->x += pdx * VIEW_DISTANCE;
+    p->y += pdy * VIEW_DISTANCE;
+    point intersection = {0, 0};
+    float lowscore = 300;
+    for (int j = 0; j < m->size; j++) {
+        line* current = &m->lines[j];
+        if (point_intersection(c->p, p, current->p1, current->p2, &intersection)) {
+            float len = point_length(c->p, &intersection);
+            if (len < lowscore) {
+                lowscore = len;
+                uint8_t lineheight = (uint8_t)(60/len);
+                surf_draw_line(s, i, 60, i, 60-lineheight, current->color);
+                surf_draw_line(s, i, 60, i, 60+lineheight, current->color);
             }
         }
     }
+}
 
-    if (debug) {
-        uint8_t c1x = MTSX(c->l->x, s);
-        uint8_t c1y = MTSY(c->l->y, s);
-        uint8_t c2x = MTSX(c->r->x, s);
-        uint8_t c2y = MTSY(c->r->y, s);
-        uint8_t px = MTSX(c->p->x, s);
-        uint8_t py = MTSY(c->p->y, s);
-        surf_draw_line(s, c1x, c1y, c2x, c2y, 6);
-        surf_set_pixel(s, c1x, c1y, 7);
-        surf_set_pixel(s, c2x, c2y, 7);
-        surf_set_pixel(s, px, py, 7);
-        for (int i = 0; i < m->size; i++) {
-            line* current = &m->lines[i];
-            uint8_t p1x = MTSX(current->p1->x, s);
-            uint8_t p1y = MTSY(current->p1->y, s);
-            uint8_t p2x = MTSX(current->p2->x, s);
-            uint8_t p2y = MTSY(current->p2->y, s);
-            surf_draw_line(s, p1x, p1y, p2x, p2y, 6);
+void ray_edges(camera* c, surface* s, map* m, point* p, uint8_t i) {
+    float min_dist = point_length(c->l, c->r)/s->w;
+    point pdist = {0, 0};
+    pdist.x = p->x + (p->x - c->p->x) * VIEW_DISTANCE;
+    pdist.y = p->y + (p->y - c->p->y) * VIEW_DISTANCE;
+    point intersection = {0, 0};
+    float lowscore = 300;
+    for (int j = 0; j < m->size; j++) {
+        line* current = &m->lines[j];
+        if (point_intersection(c->p, &pdist, current->p1, current->p2, &intersection)) {
+            float len = point_length(c->p, &intersection);
+            if (len < lowscore) {
+                lowscore = len;
+                uint8_t color = current-> color;
+
+                // vertical edges
+                point itmp = {0, 0};
+                if (point_intersection(c->p, current->p1, c->l, c->r, &itmp) && point_length(&itmp, p) < min_dist) color = 7;
+                if (point_intersection(c->p, current->p2, c->l, c->r, &itmp) && point_length(&itmp, p) < min_dist) color = 7;
+
+                uint8_t lineheight = (uint8_t)(60/len);
+                surf_draw_line(s, i, 60, i, 60-lineheight, color);
+                surf_draw_line(s, i, 60, i, 60+lineheight, color);
+
+                // horizontal edges
+                surf_set_pixel(s, i, 60-lineheight, 7);
+                surf_set_pixel(s, i, 60+lineheight, 7);
+
+                // cross
+                float dist = point_length(current->p1, current->p2);
+                float dist1 = point_length(current->p1, &intersection);
+                float dist2 = point_length(current->p2, &intersection);
+                if (dist2 < dist1) dist1 = dist2;
+                float ratio = dist1/dist;
+                uint8_t cross_height = lineheight-(lineheight*ratio)*2;
+                surf_set_pixel(s, i, 60-cross_height, 7);
+                surf_set_pixel(s, i, 60+cross_height, 7);
+            }
         }
     }
 }
